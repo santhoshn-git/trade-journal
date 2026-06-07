@@ -112,7 +112,7 @@ const K={
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
-function pipSz(p){const u=(p||"").toUpperCase();if(u.includes("XAU")||u.includes("GOLD"))return 0.01;if(u.endsWith("JPY"))return 0.01;return 0.0001;}
+function pipSz(p){const u=(p||"").toUpperCase();if(u.includes("XAU")||u.includes("GOLD"))return 0.10;if(u.endsWith("JPY"))return 0.01;return 0.0001;}
 function pipVl(p,l){const u=(p||"").toUpperCase();const v=parseFloat(l)||0.01;if(u.includes("XAU")||u.includes("GOLD"))return v*100;if(u.endsWith("JPY"))return v*1000;return v*10;}
 function doPnL(pair,dir,en,ex,lot){
   if(!en||!ex)return{pnl:0,pips:0};
