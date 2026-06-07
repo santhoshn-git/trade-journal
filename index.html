@@ -344,55 +344,53 @@ function App(){
 
   // ── AI analyse ─────────────────────────────────────────────────
   async function analyse(){
-    setAiLoad(true);setAiText("Analysing your trade...");
-    const failed=RULES.filter((_,i)=>!checks[i]).map(r=>r.t);
-    const rfD=isRF?`\nH1: exit ${rfEx1}, lots ${rfLt1}, P&L $${rfPnl1}\nH2: exit ${rfEx2} (${rfEx2T}), lots ${rfLt2}, P&L $${rfPnl2}`:"";
-    const prompt=`You are a professional forex and gold (XAU/USD) trading coach. Be sharp and specific.
 
-TRADE: ${pair||"Unknown"} | ${dir} | Bias: ${bias} | Strategy: ${strat}
-Sessions: ${sessions.join(",")||"—"} | TFs: ${tfs.join(",")||"—"}
-Planned: Entry ${sEntry} | SL ${sSL} | TP ${sTP}
-Actual: Entry ${isRF?rfEnt:rEntry} | Exit: ${isRF?rfEx1+" (H1), "+rfEx2+" (H2)":rExit}
-P&L: $${isRF?rfTotal:rPnl} | Pips: ${isRF?rfPips:rPips} | R:R: ${isRF?rfRR:rRR}
-Outcome: ${outcome}${rfD}
-Exit: ${exitType} | Slippage: ${slip} pips
-Checklist: ${score}/11 — ${vrd}
-Failed rules: ${failed.length?failed.join(", "):"None — all passed"}
-${override?"Override reason: "+override:""}
-Pre notes: ${preNotes||"—"} | Post notes: ${postNotes||"—"}
-Day so far: ${todayT.length} trades | P&L $${dayPnl.toFixed(2)} (${dayPct.toFixed(2)}%)
+  const failed = RULES
+    .filter((_,i)=>!checks[i])
+    .map(r=>r.t);
 
-Respond in this exact format:
+  const pnl = parseFloat(isRF ? rfTotal : rPnl) || 0;
 
-EXECUTION QUALITY: [1-2 sentences]
+  let grade = "C";
+
+  if(score >= 9 && pnl > 0) grade = "A";
+  else if(score >= 7 && pnl >= 0) grade = "B";
+
+  let analysis = `
+EXECUTION QUALITY: Grade ${grade}
 
 WHAT YOU DID WELL:
-- [specific point]
-- [specific point]
+- Checklist score: ${score}/11
+- Outcome: ${outcome || "Not specified"}
 
 AREAS TO IMPROVE:
-- [specific actionable point]
-- [specific actionable point]
+`;
 
-KEY INSIGHT: [the single most important lesson from this trade]
-
-NEXT TRADE ADVICE: [what to focus on for the next setup on ${pair||"this pair"}]`;
-    try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,messages:[{role:"user",content:prompt}]})
-      });
-      const data=await res.json();
-      setAiText(data.content?.[0]?.text||"No analysis returned.");
-      setAiDone(true);showToast("✓ Analysis complete — review then log");
-    }catch(e){
-      setAiText("⚠ AI Error: "+e.message+"\n\nIf you opened this file directly (file://) the browser blocks API calls.\n\nFix: Use your Netlify URL instead — https://your-site.netlify.app\n\nIf already on Netlify, check your internet connection.");
-      setAiDone(true);
-    }
-    setAiLoad(false);
+  if(failed.length){
+    failed.forEach(f=>{
+      analysis += `\n- ${f}`;
+    });
+  }else{
+    analysis += `
+- Maintain consistency
+- Continue following your process
+`;
   }
 
+  analysis += `
+
+KEY INSIGHT:
+${pnl > 0
+  ? "Protect winning habits and repeat the process."
+  : "Focus on execution quality rather than the result."}
+
+NEXT TRADE ADVICE:
+Wait for full confirmation and trade only high-quality setups.
+`;
+
+  setAiText(analysis);
+  setAiDone(true);
+}
   // ── Log trade ──────────────────────────────────────────────────
   async function logTrade(){
     const url=sheetUrl.trim(),payload=buildPayload();
