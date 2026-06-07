@@ -295,6 +295,38 @@ function App(){
   const dayPct=(dayPnl/bal)*100;
   const dpCol=dayPnl>0?K.gr:dayPnl<0?K.rd:K.am;
 
+  // ── Monthly stats ──────────────────────────────────────────────
+const currentMonth = getIST().date.substring(0,7); // YYYY-MM
+
+const monthTrades = localLog.filter(
+  t => t.type === "trade" &&
+       t.date &&
+       t.date.startsWith(currentMonth)
+);
+
+const monthPnl = monthTrades.reduce(
+  (s,t)=>s+(parseFloat(t.pnl)||0),0
+);
+
+const monthPips = monthTrades.reduce(
+  (s,t)=>s+(parseFloat(t.pips)||0),0
+);
+
+const monthWins = monthTrades.filter(
+  t=>t.outcome==="Win"
+).length;
+
+const monthLosses = monthTrades.filter(
+  t=>t.outcome==="Loss"
+).length;
+
+const monthPct = (monthPnl / bal) * 100;
+
+const mpCol =
+  monthPnl > 0 ? K.gr :
+  monthPnl < 0 ? K.rd :
+  K.am;
+
   // ── Checklist score ────────────────────────────────────────────
   const score=checks.filter(Boolean).length;
   const vrd=score>=9?"Perfect trade":score>=6?"Trade with caution":"Do not trade";
@@ -453,6 +485,33 @@ function App(){
     setTab("setup");
   }
 
+  function resetMonth(){
+
+  if(!confirm("Reset monthly statistics?"))
+    return;
+
+  const filtered = localLog.filter(item=>{
+
+    if(item.type !== "trade")
+      return true;
+
+    if(!item.date)
+      return true;
+
+    return !item.date.startsWith(currentMonth);
+
+  });
+
+  setLocalLog(filtered);
+
+  localStorage.setItem(
+    "tj_log",
+    JSON.stringify(filtered)
+  );
+
+  showToast("✓ Monthly statistics reset");
+}
+
   // ── Render ─────────────────────────────────────────────────────
   return(
     <div style={{background:K.bg,minHeight:"100vh",color:K.tx,fontFamily:"'Segoe UI',sans-serif",paddingBottom:80}}>
@@ -488,9 +547,80 @@ function App(){
           <Btn label="End Day + Log Summary" variant="pur" onClick={()=>setShowEOD(true)}/>
         </div>
       </div>
+      {/* Monthly P&L bar */}
+<div
+  style={{
+    background:K.bg3,
+    borderBottom:`1px solid ${K.bd}`,
+    padding:"11px 22px",
+    display:"flex",
+    alignItems:"center",
+    gap:18,
+    flexWrap:"wrap"
+  }}
+>
+  <span
+    style={{
+      fontFamily:"monospace",
+      fontSize:9,
+      color:K.tx3,
+      textTransform:"uppercase",
+      letterSpacing:".12em"
+    }}
+  >
+    This Month
+  </span>
 
+  <div style={{width:1,height:28,background:K.bd}}/>
+
+  <StatChip
+    label="P&L"
+    value={(monthPnl>=0?"+":"")+"$"+monthPnl.toFixed(2)}
+    color={mpCol}
+  />
+
+  <div style={{width:1,height:28,background:K.bd}}/>
+
+  <StatChip
+    label="Return"
+    value={(monthPct>=0?"+":"")+monthPct.toFixed(2)+"%"}
+    color={mpCol}
+  />
+
+  <div style={{width:1,height:28,background:K.bd}}/>
+
+  <StatChip
+    label="Pips"
+    value={(monthPips>=0?"+":"")+monthPips.toFixed(1)}
+    color={mpCol}
+  />
+
+  <div style={{width:1,height:28,background:K.bd}}/>
+
+  <StatChip
+    label="Trades"
+    value={monthTrades.length}
+    color={K.tx}
+  />
+
+  <div style={{width:1,height:28,background:K.bd}}/>
+
+  <StatChip
+    label="W / L"
+    value={`${monthWins} / ${monthLosses}`}
+    color={K.tx2}
+  />
+
+  <div style={{marginLeft:"auto"}}>
+    <Btn
+      label="Reset Month"
+      variant="dan"
+      onClick={resetMonth}
+    />
+  </div>
+</div>
       <div style={{maxWidth:880,margin:"0 auto",padding:"18px 18px 0"}}>
-
+       
         {/* Sheets config */}
         <div style={{background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:14,marginBottom:14}}>
           <div style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".12em",marginBottom:10}}>Google Sheets Connection</div>
