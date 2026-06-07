@@ -345,50 +345,49 @@ function App(){
   // ── AI analyse ─────────────────────────────────────────────────
   async function analyse(){
 
-  const failed = RULES
-    .filter((_,i)=>!checks[i])
-    .map(r=>r.t);
+  const insights = [];
 
-  const pnl = parseFloat(isRF ? rfTotal : rPnl) || 0;
+  const rr = parseFloat(isRF ? rfRR : rRR) || 0;
 
-  let grade = "C";
-
-  if(score >= 9 && pnl > 0) grade = "A";
-  else if(score >= 7 && pnl >= 0) grade = "B";
-
-  let analysis = `
-EXECUTION QUALITY: Grade ${grade}
-
-WHAT YOU DID WELL:
-- Checklist score: ${score}/11
-- Outcome: ${outcome || "Not specified"}
-
-AREAS TO IMPROVE:
-`;
-
-  if(failed.length){
-    failed.forEach(f=>{
-      analysis += `\n- ${f}`;
-    });
-  }else{
-    analysis += `
-- Maintain consistency
-- Continue following your process
-`;
+  if(score < 9){
+    insights.push(`Missed ${11-score} checklist item(s).`);
   }
 
-  analysis += `
+  if(rr < 2){
+    insights.push("Look for higher R:R setups.");
+  }
 
-KEY INSIGHT:
-${pnl > 0
-  ? "Protect winning habits and repeat the process."
-  : "Focus on execution quality rather than the result."}
+  if(outcome === "Loss"){
+    insights.push("Review entry timing before taking similar setups.");
+  }
 
-NEXT TRADE ADVICE:
-Wait for full confirmation and trade only high-quality setups.
-`;
+  if(outcome === "Win"){
+    insights.push("Repeat the process, not the result.");
+  }
 
-  setAiText(analysis);
+  if(outcome === "Risk Free"){
+    insights.push("Evaluate whether partials were taken too early.");
+  }
+
+  if(!checks[3]){
+    insights.push("Wait for clearer liquidity sweeps.");
+  }
+
+  if(!checks[4]){
+    insights.push("Seek stronger confirmation candles.");
+  }
+
+  if(!checks[5]){
+    insights.push("Trade during London or New York sessions.");
+  }
+
+  // Ensure 3 points max
+  const finalInsights = insights.slice(0,3);
+
+  setAiText(
+    finalInsights.map((x,i)=>`${i+1}. ${x}`).join("\n")
+  );
+
   setAiDone(true);
 }
   // ── Log trade ──────────────────────────────────────────────────
