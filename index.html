@@ -119,7 +119,7 @@ function pipSz(pair){
       return 0.0001;
 
   if(p === "XAU/USD" || p === "XAUUSD" || p === "GOLD")
-      return 0.10;
+      return 0.01;
 
   return 0;
 }
@@ -127,7 +127,13 @@ function pipSz(pair){
 function pipVl(pair, lotSize){
   const lot = parseFloat(lotSize) || 0;
 
-  return 10 * lot;
+  if(pair === "EUR/USD")
+      return 10 * lot;
+
+  if(pair === "XAU/USD")
+      return 1 * lot;
+
+  return 0;
 }
   
 function doPnL(pair, dir, entry, exit, lotSize){
@@ -137,9 +143,6 @@ function doPnL(pair, dir, entry, exit, lotSize){
 
   const pipSize = pipSz(pair);
 
-  if(!pipSize)
-      return { pnl:0, pips:0 };
-
   const movement =
       dir === "BUY"
           ? (exit - entry)
@@ -147,7 +150,7 @@ function doPnL(pair, dir, entry, exit, lotSize){
 
   const pips = movement / pipSize;
 
-  const profit = pips * 10 * (parseFloat(lotSize) || 0);
+  const profit = pips * pipVl(pair, lotSize);
 
   return {
       pnl: profit,
@@ -309,7 +312,7 @@ function App(){
     const{pnl,pips}=doPnL(pair,dir,en,ex,lt);
     setRPnl(pnl.toFixed(2));setRPips(pips.toFixed(2));
     const pu = (pair || "").toUpperCase();
-    setRPipLbl(pu.includes("XAU") ? "XAU/USD — 1 pip = $0.10" : "EUR/USD — 1 pip = 0.0001");
+    setRPipLbl(pu.includes("XAU") ? "XAU/USD — 1 pip = 0.01" : "EUR/USD — 1 pip = 0.0001");
     if(sl&&en){const ps=pipSz(pair),sp=Math.abs(en-sl)/ps;setRRR(sp>0?Math.abs(pips/sp).toFixed(2):"");}
   }
   function calcRF(f,v){
