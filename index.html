@@ -112,12 +112,47 @@ const K={
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
-function pipSz(p){const u=(p||"").toUpperCase();if(u.includes("XAU")||u.includes("GOLD"))return 0.10;if(u.endsWith("JPY"))return 0.01;return 0.0001;}
-function pipVl(p,l){const u=(p||"").toUpperCase();const v=parseFloat(l)||0.01;if(u.includes("XAU")||u.includes("GOLD"))return v*100;if(u.endsWith("JPY"))return v*1000;return v*10;}
-function doPnL(pair,dir,en,ex,lot){
-  if(!en||!ex)return{pnl:0,pips:0};
-  const ps=pipSz(pair),pv=pipVl(pair,lot),raw=dir==="BUY"?(ex-en):(en-ex),pips=raw/ps;
-  return{pnl:pips*pv,pips};
+function pipSz(pair){
+  const p = (pair || "").toUpperCase();
+
+  if(p === "EUR/USD" || p === "EURUSD")
+      return 0.0001;
+
+  if(p === "XAU/USD" || p === "XAUUSD" || p === "GOLD")
+      return 0.10;
+
+  return 0;
+}
+
+function pipVl(pair, lotSize){
+  const lot = parseFloat(lotSize) || 0;
+
+  return 10 * lot;
+}
+  
+function doPnL(pair, dir, entry, exit, lotSize){
+
+  if(!entry || !exit)
+      return { pnl:0, pips:0 };
+
+  const pipSize = pipSz(pair);
+
+  if(!pipSize)
+      return { pnl:0, pips:0 };
+
+  const movement =
+      dir === "BUY"
+          ? (exit - entry)
+          : (entry - exit);
+
+  const pips = movement / pipSize;
+
+  const profit = pips * 10 * (parseFloat(lotSize) || 0);
+
+  return {
+      pnl: profit,
+      pips: pips
+  };
 }
 function getIST(){
   const n=new Date(),ist=new Date(n.getTime()+5.5*60*60*1000),pad=x=>String(x).padStart(2,"0");
@@ -273,8 +308,8 @@ function App(){
     if(!en||!ex)return;
     const{pnl,pips}=doPnL(pair,dir,en,ex,lt);
     setRPnl(pnl.toFixed(2));setRPips(pips.toFixed(2));
-    const pu=(pair||"").toUpperCase();
-    setRPipLbl(pu.includes("XAU")?"Gold — $0.10/pip":pu.endsWith("JPY")?"JPY — 0.01/pip":"Forex — 0.0001/pip");
+    const pu = (pair || "").toUpperCase();
+    setRPipLbl(pu.includes("XAU") ? "XAU/USD — 1 pip = $0.10" : "EUR/USD — 1 pip = 0.0001");
     if(sl&&en){const ps=pipSz(pair),sp=Math.abs(en-sl)/ps;setRRR(sp>0?Math.abs(pips/sp).toFixed(2):"");}
   }
   function calcRF(f,v){
@@ -495,7 +530,7 @@ NEXT TRADE ADVICE: [what to focus on for the next setup on ${pair||"this pair"}]
           <div>
             <Sec t="Instrument & Order"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
-              <Fld label="Pair / Instrument"><input value={pair} onChange={e=>setPair(e.target.value)} placeholder="EUR/USD or XAU/USD"/></Fld>
+              <Fld label="Pair / Instrument"><select value={pair} onChange={e=>setPair(e.target.value)}><option value="">Select Pair</option><option value="EUR/USD">EUR/USD</option><option value="XAU/USD">XAU/USD</option></select></Fld>
               <Fld label="Order Type">
                 <select value={orderType} onChange={e=>setOrderType(e.target.value)}>
                   <option value="">Select...</option>
