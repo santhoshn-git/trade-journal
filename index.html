@@ -274,7 +274,7 @@ function App(){
     const{pnl,pips}=doPnL(pair,dir,en,ex,lt);
     setRPnl(pnl.toFixed(2));setRPips(pips.toFixed(2));
     const pu=(pair||"").toUpperCase();
-    setRPipLbl(pu.includes("XAU")?"Gold — $0.01/pip":pu.endsWith("JPY")?"JPY — 0.01/pip":"Forex — 0.0001/pip");
+    setRPipLbl(pu.includes("XAU")?"Gold — $0.10/pip":pu.endsWith("JPY")?"JPY — 0.01/pip":"Forex — 0.0001/pip");
     if(sl&&en){const ps=pipSz(pair),sp=Math.abs(en-sl)/ps;setRRR(sp>0?Math.abs(pips/sp).toFixed(2):"");}
   }
   function calcRF(f,v){
