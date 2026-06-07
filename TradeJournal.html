@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Trade Journal v3</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0f12;color:#e8eaf0;font-family:'Segoe UI',sans-serif;min-height:100vh}
+input,select,textarea{background:#1a1e23;border:1px solid #2a2f38;border-radius:7px;color:#e8eaf0;font-family:monospace;font-size:13px;padding:9px 12px;outline:none;width:100%;transition:border .15s}
+input:focus,select:focus,textarea:focus{border-color:#3a4050}
+input[readonly]{background:#131619;color:#565c6e;cursor:default}
+select option{background:#1a1e23}
+textarea{resize:vertical;min-height:68px;line-height:1.55}
+button{cursor:pointer;font-family:monospace;border-radius:8px;font-weight:600;letter-spacing:.04em;transition:opacity .15s}
+button:disabled{opacity:.35;cursor:not-allowed}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:#131619}
+::-webkit-scrollbar-thumb{background:#2a2f38;border-radius:3px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<script>
+// Suppress Babel in-browser transpiler notice (safe for personal use)
+const _warn = console.warn.bind(console);
+console.warn = (...args) => {
+  if (args[0] && typeof args[0] === 'string' && args[0].includes('in-browser Babel')) return;
+  _warn(...args);
+};
+</script>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useRef}=React;
+
+// ── Constants ────────────────────────────────────────────────────
+const RULES=[
+  {t:"Valid setup present",           c:"structure",w:false},
+  {t:"Bias aligned with trade dir",   c:"structure",w:false},
+  {t:"5 min BOS confirmed",           c:"entry",    w:false},
+  {t:"Liquidity sweep visible",       c:"entry",    w:false},
+  {t:"LTF confirmation candle",       c:"entry",    w:false},
+  {t:"Active killzone — LDN or NY",   c:"timing",   w:false},
+  {t:"R:R at minimum 1:2",            c:"risk",     w:false},
+  {t:"SL at structural invalidation", c:"risk",     w:false},
+  {t:"Position within risk limit",    c:"risk",     w:false},
+  {t:"No high-impact news (30 min)",  c:"news",     w:true },
+  {t:"Spread within acceptable range",c:"broker",   w:true },
+];
+const SESSIONS=["Asian","London","New York","Overlap"];
+const TFS=["M1","M5","M15","M30","H1","H4","D1","W1"];
+const MO=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const SCRIPT=`function doGet(e){
+  var p=e?e.parameter:{};
+  if(p&&p.payload) return writeData(JSON.parse(decodeURIComponent(p.payload)));
+  return ContentService.createTextOutput(JSON.stringify({status:"ok",msg:"connected"})).setMimeType(ContentService.MimeType.JSON);
+}
+function doPost(e){
+  try{ return writeData(JSON.parse(e.postData.contents)); }
+  catch(err){ return ContentService.createTextOutput(JSON.stringify({status:"error",msg:err.toString()})).setMimeType(ContentService.MimeType.JSON); }
+}
+function writeData(data){
+  try{
+    if(data.test) return ContentService.createTextOutput(JSON.stringify({status:"ok",msg:"connected"})).setMimeType(ContentService.MimeType.JSON);
+    var ss=SpreadsheetApp.getActiveSpreadsheet();
+    if(data.type==="trade"){
+      var ts=ss.getSheetByName("TradeJournal");
+      if(!ts){
+        ts=ss.insertSheet("TradeJournal");
+        ts.appendRow(["Date","Time IST","Pair","Direction","Bias","Order Type","Lot Size","Sessions","Timeframes","Strategy",
+          "Planned Entry","Planned SL","Planned TP","Pre Notes","Checklist Score","Verdict","Override Reason",
+          "C0","C1","C2","C3","C4","C5","C6","C7","C8","C9","C10",
+          "Outcome","Actual Entry","Exit H1","Exit H2","Lots H1","Lots H2","P&L USD","Pips","R:R","Exit Type","Slippage","Post Notes","AI Insights"]);
+      }
+      ts.appendRow([data.date,data.timeIST,data.pair,data.direction,data.bias,data.orderType,data.lotSize,
+        data.sessions,data.timeframes,data.strategy,data.sEntry,data.sSL,data.sTP,data.preNotes,
+        data.checklistScore,data.verdict,data.overrideReason,
+        data.c0,data.c1,data.c2,data.c3,data.c4,data.c5,data.c6,data.c7,data.c8,data.c9,data.c10,
+        data.outcome,data.actualEntry,data.exit1,data.exit2,data.lots1,data.lots2,
+        data.pnl,data.pips,data.rr,data.exitType,data.slippage,data.postNotes,data.aiInsights]);
+    }
+    if(data.type==="eod"){
+      var ds=ss.getSheetByName("DailySummary");
+      if(!ds){
+        ds=ss.insertSheet("DailySummary");
+        ds.appendRow(["Date","Total Trades","Wins","Losses","Breakevens","Risk Free",
+          "Total P&L USD","Total P&L %","Total Pips","Avg R:R","Best Trade","Worst Trade","Balance After","Pairs Traded","Notes"]);
+      }
+      ds.appendRow([data.date,data.totalTrades,data.wins,data.losses,data.breakevens,data.riskFree,
+        data.totalPnl,data.totalPct,data.totalPips,data.avgRR,data.bestTrade,data.worstTrade,data.balanceAfter,data.pairsTraded,data.eodNotes]);
+    }
+    return ContentService.createTextOutput(JSON.stringify({status:"ok"})).setMimeType(ContentService.MimeType.JSON);
+  }catch(err){
+    return ContentService.createTextOutput(JSON.stringify({status:"error",msg:err.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+// ── Colours ──────────────────────────────────────────────────────
+const K={
+  bg:"#0d0f12",bg2:"#131619",bg3:"#1a1e23",bg4:"#212630",
+  bd:"#2a2f38",bd2:"#3a4050",
+  tx:"#e8eaf0",tx2:"#8b909e",tx3:"#565c6e",
+  gr:"#22c55e",grd:"#0d2918",grb:"#1d4d2a",
+  rd:"#ef4444",rdd:"#1c0808",rdb:"#dc2626",
+  am:"#f59e0b",amd:"#1f1208",
+  bl:"#3b82f6",bld:"#0a1628",
+  pu:"#a855f7",pud:"#180e24",
+};
+
+// ── Helpers ──────────────────────────────────────────────────────
+function pipSz(p){const u=(p||"").toUpperCase();if(u.includes("XAU")||u.includes("GOLD"))return 0.01;if(u.endsWith("JPY"))return 0.01;return 0.0001;}
+function pipVl(p,l){const u=(p||"").toUpperCase();const v=parseFloat(l)||0.01;if(u.includes("XAU")||u.includes("GOLD"))return v*100;if(u.endsWith("JPY"))return v*1000;return v*10;}
+function doPnL(pair,dir,en,ex,lot){
+  if(!en||!ex)return{pnl:0,pips:0};
+  const ps=pipSz(pair),pv=pipVl(pair,lot),raw=dir==="BUY"?(ex-en):(en-ex),pips=raw/ps;
+  return{pnl:pips*pv,pips};
+}
+function getIST(){
+  const n=new Date(),ist=new Date(n.getTime()+5.5*60*60*1000),pad=x=>String(x).padStart(2,"0");
+  return{
+    full:`${pad(ist.getUTCDate())} ${MO[ist.getUTCMonth()]} ${ist.getUTCFullYear()} — ${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}:${pad(ist.getUTCSeconds())} IST`,
+    date:`${ist.getUTCFullYear()}-${pad(ist.getUTCMonth()+1)}-${pad(ist.getUTCDate())}`,
+    time:`${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}:${pad(ist.getUTCSeconds())}`,
+  };
+}
+function fmt(n,pre=2){return(parseFloat(n)||0).toFixed(pre);}
+function sign(n){return parseFloat(n)>=0?"+":" ";}
+
+// ── Shared tiny components ───────────────────────────────────────
+function Lbl({t}){return <label style={{fontSize:11,color:K.tx3,fontFamily:"monospace",letterSpacing:".06em",textTransform:"uppercase",display:"block",marginBottom:4}}>{t}</label>;}
+function Fld({label,children}){return <div style={{display:"flex",flexDirection:"column"}}><Lbl t={label}/>{children}</div>;}
+function Sec({t}){return <div style={{fontFamily:"monospace",fontSize:9,fontWeight:700,color:K.tx3,textTransform:"uppercase",letterSpacing:".15em",marginTop:20,marginBottom:8,borderBottom:`1px solid ${K.bd}`,paddingBottom:6}}>{t}</div>;}
+
+function Tog({label,active,col,onClick}){
+  const cols={G:{border:`1px solid ${K.gr}`,background:K.grd,color:K.gr},R:{border:`1px solid ${K.rd}`,background:K.rdd,color:K.rd},A:{border:`1px solid ${K.am}`,background:K.amd,color:K.am},P:{border:`1px solid ${K.pu}`,background:K.pud,color:K.pu},B:{border:`1px solid ${K.bl}`,background:K.bld,color:K.bl}};
+  const base={padding:"7px 13px",borderRadius:6,fontSize:12,fontFamily:"monospace",cursor:"pointer",userSelect:"none",border:`1px solid ${K.bd}`,background:K.bg3,color:K.tx2};
+  return <div style={{...base,...(active?cols[col]||cols.B:{})}} onClick={onClick}>{label}</div>;
+}
+
+function Btn({label,onClick,variant="def",disabled,full}){
+  const vs={def:{background:"transparent",border:`1px solid ${K.bd2}`,color:K.tx2},pri:{background:K.gr,border:`1px solid ${K.gr}`,color:"#000"},pur:{background:K.pud,border:`1px solid ${K.pu}`,color:K.pu},dan:{background:"transparent",border:`1px solid ${K.rdb}`,color:K.rd}};
+  return <button onClick={onClick} disabled={disabled} style={{...vs[variant]||vs.def,padding:"10px 20px",fontSize:12,width:full?"100%":"auto"}}>{label}</button>;
+}
+
+function CheckRow({rule,checked,onToggle}){
+  const bg=checked?(rule.w?K.amd:K.grd):K.bg3;
+  const bd=checked?(rule.w?"#4d2e0a":K.grb):K.bd;
+  const cbBg=checked?(rule.w?K.am:K.gr):"transparent";
+  const cbBd=checked?(rule.w?K.am:K.gr):K.bd2;
+  return(
+    <div onClick={onToggle} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:bg,border:`1px solid ${bd}`,borderRadius:8,marginBottom:6,cursor:"pointer",userSelect:"none"}}>
+      <div style={{width:18,height:18,borderRadius:4,background:cbBg,border:`1.5px solid ${cbBd}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        {checked&&<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#000" strokeWidth="2.5"><polyline points="2,6 5,9 10,3"/></svg>}
+      </div>
+      <span style={{flex:1,fontSize:13,color:checked?K.tx:K.tx2}}>{rule.t}</span>
+      <span style={{fontSize:9,fontFamily:"monospace",color:K.tx3,background:K.bg4,padding:"2px 6px",borderRadius:3}}>{rule.c}</span>
+    </div>
+  );
+}
+
+function StatChip({label,value,color}){
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:2}}>
+      <span style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".1em"}}>{label}</span>
+      <span style={{fontFamily:"monospace",fontSize:15,fontWeight:700,color:color||K.tx}}>{value}</span>
+    </div>
+  );
+}
+
+// ── Toast hook ───────────────────────────────────────────────────
+function useToast(){
+  const [msg,setMsg]=useState("");
+  function show(m){setMsg(m);setTimeout(()=>setMsg(""),3200);}
+  return[msg,show];
+}
+
+// ── Main App ─────────────────────────────────────────────────────
+function App(){
+  const [tab,setTab]=useState("setup");
+  const [clock,setClock]=useState(getIST().full);
+  const [sheetUrl,setSheetUrl]=useState(()=>localStorage.getItem("tj_url")||"");
+  const [connMsg,setConnMsg]=useState({t:"",ok:false});
+  const [toastMsg,showToast]=useToast();
+  const [localLog,setLocalLog]=useState(()=>JSON.parse(localStorage.getItem("tj_log")||"[]"));
+  const [dayTrades,setDayTrades]=useState(()=>JSON.parse(localStorage.getItem("tj_day")||"[]"));
+  const [balance,setBalance]=useState(()=>localStorage.getItem("tj_bal")||"10000");
+  const [showEOD,setShowEOD]=useState(false);
+  const [eodNotes,setEodNotes]=useState("");
+
+  // Setup fields
+  const [pair,setPair]=useState("");
+  const [orderType,setOrderType]=useState("");
+  const [lotSize,setLotSize]=useState("");
+  const [dir,setDir]=useState("");
+  const [bias,setBias]=useState("");
+  const [sessions,setSessions]=useState([]);
+  const [tfs,setTfs]=useState([]);
+  const [strat,setStrat]=useState("");
+  const [sEntry,setSEntry]=useState("");
+  const [sSL,setSSL]=useState("");
+  const [sTP,setSTP]=useState("");
+  const [preNotes,setPreNotes]=useState("");
+
+  // Checklist
+  const [checks,setChecks]=useState(Array(11).fill(false));
+  const [override,setOverride]=useState("");
+
+  // Result
+  const [outcome,setOutcome]=useState("");
+  const [rEntry,setREntry]=useState("");
+  const [rExit,setRExit]=useState("");
+  const [rPnl,setRPnl]=useState("");
+  const [rPips,setRPips]=useState("");
+  const [rRR,setRRR]=useState("");
+  const [rPipLbl,setRPipLbl]=useState("");
+  const [exitType,setExitType]=useState("");
+  const [slip,setSlip]=useState("");
+  const [postNotes,setPostNotes]=useState("");
+  // RF
+  const [rfEnt,setRfEnt]=useState("");
+  const [rfEx1,setRfEx1]=useState("");
+  const [rfLt1,setRfLt1]=useState("");
+  const [rfPnl1,setRfPnl1]=useState("");
+  const [rfEx2,setRfEx2]=useState("");
+  const [rfEx2T,setRfEx2T]=useState("");
+  const [rfLt2,setRfLt2]=useState("");
+  const [rfPnl2,setRfPnl2]=useState("");
+  const [rfTotal,setRfTotal]=useState("");
+  const [rfPips,setRfPips]=useState("");
+  const [rfRR,setRfRR]=useState("");
+  // AI
+  const [aiText,setAiText]=useState("Fill the result above then click Analyse.");
+  const [aiDone,setAiDone]=useState(false);
+  const [aiLoad,setAiLoad]=useState(false);
+
+  // Clock
+  useEffect(()=>{const t=setInterval(()=>setClock(getIST().full),1000);return()=>clearInterval(t);},[]);
+  // Persist
+  useEffect(()=>{localStorage.setItem("tj_url",sheetUrl);},[sheetUrl]);
+  useEffect(()=>{localStorage.setItem("tj_bal",balance);},[balance]);
+  useEffect(()=>{localStorage.setItem("tj_log",JSON.stringify(localLog));},[localLog]);
+  useEffect(()=>{localStorage.setItem("tj_day",JSON.stringify(dayTrades));},[dayTrades]);
+
+  // ── Daily stats ────────────────────────────────────────────────
+  const today=getIST().date;
+  // Filter dayTrades to only today (auto-reset if new day)
+  const todayT=dayTrades.filter(t=>t.date===today);
+  const dayPnl=todayT.reduce((s,t)=>s+(parseFloat(t.pnl)||0),0);
+  const dayPips=todayT.reduce((s,t)=>s+(parseFloat(t.pips)||0),0);
+  const dayWins=todayT.filter(t=>t.outcome==="Win").length;
+  const dayLoss=todayT.filter(t=>t.outcome==="Loss").length;
+  const bal=parseFloat(balance)||10000;
+  const dayPct=(dayPnl/bal)*100;
+  const dpCol=dayPnl>0?K.gr:dayPnl<0?K.rd:K.am;
+
+  // ── Checklist score ────────────────────────────────────────────
+  const score=checks.filter(Boolean).length;
+  const vrd=score>=9?"Perfect trade":score>=6?"Trade with caution":"Do not trade";
+  const vrdCol=score>=9?K.gr:score>=6?K.am:K.rd;
+
+  // ── Toggle helpers ─────────────────────────────────────────────
+  function toggleSess(s){setSessions(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);}
+  function toggleTF(t){setTfs(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);}
+  function toggleChk(i){setChecks(p=>{const n=[...p];n[i]=!n[i];return n;});}
+
+  // ── P&L calculation ────────────────────────────────────────────
+  function calcStd(ent,ext){
+    const en=parseFloat(ent)||parseFloat(sEntry)||0,ex=parseFloat(ext)||0,lt=parseFloat(lotSize)||0.01,sl=parseFloat(sSL)||0;
+    if(!en||!ex)return;
+    const{pnl,pips}=doPnL(pair,dir,en,ex,lt);
+    setRPnl(pnl.toFixed(2));setRPips(pips.toFixed(2));
+    const pu=(pair||"").toUpperCase();
+    setRPipLbl(pu.includes("XAU")?"Gold — $0.01/pip":pu.endsWith("JPY")?"JPY — 0.01/pip":"Forex — 0.0001/pip");
+    if(sl&&en){const ps=pipSz(pair),sp=Math.abs(en-sl)/ps;setRRR(sp>0?Math.abs(pips/sp).toFixed(2):"");}
+  }
+  function calcRF(f,v){
+    const en=parseFloat(f==="rfEnt"?v:rfEnt)||parseFloat(sEntry)||0;
+    const ex1=parseFloat(f==="rfEx1"?v:rfEx1)||0,lt1=parseFloat(f==="rfLt1"?v:rfLt1)||0;
+    const ex2=parseFloat(f==="rfEx2"?v:rfEx2)||0,totLot=parseFloat(lotSize)||0.01,sl=parseFloat(sSL)||0;
+    if(!en)return;
+    let p1=0,pi1=0,p2=0,pi2=0;
+    if(ex1&&lt1){const r=doPnL(pair,dir,en,ex1,lt1);p1=r.pnl;pi1=r.pips;setRfPnl1(p1.toFixed(2));}
+    const l2=Math.max(0,totLot-lt1);setRfLt2(l2.toFixed(2));
+    if(ex2&&l2){const r=doPnL(pair,dir,en,ex2,l2);p2=r.pnl;pi2=r.pips;setRfPnl2(p2.toFixed(2));}
+    const tot=p1+p2,avgP=lt1&&l2?(pi1*lt1+pi2*l2)/totLot:(pi1||pi2);
+    setRfTotal(tot.toFixed(2));setRfPips(avgP.toFixed(2));
+    if(sl&&en){const ps=pipSz(pair),sp=Math.abs(en-sl)/ps;setRfRR(sp>0?Math.abs(avgP/sp).toFixed(2):"");}
+  }
+
+  const isRF=outcome==="Risk Free";
+  const dPnl=isRF?parseFloat(rfTotal)||0:parseFloat(rPnl)||0;
+  const dPips=isRF?rfPips:rPips;
+  const dRR=isRF?rfRR:rRR;
+
+  // ── Build payload ──────────────────────────────────────────────
+  function buildPayload(){
+    const ist=getIST();
+    const p={type:"trade",date:ist.date,timeIST:ist.time,pair,direction:dir,bias,orderType,lotSize,sessions:sessions.join(", "),timeframes:tfs.join(", "),strategy:strat,sEntry,sSL,sTP,preNotes,checklistScore:score+"/11",verdict:vrd,overrideReason:override,outcome,actualEntry:isRF?rfEnt:rEntry,exit1:isRF?rfEx1:rExit,exit2:isRF?rfEx2:"",lots1:isRF?rfLt1:lotSize,lots2:isRF?rfLt2:"",pnl:isRF?rfTotal:rPnl,pips:isRF?rfPips:rPips,rr:isRF?rfRR:rRR,exitType,slippage:slip,postNotes,aiInsights:aiText};
+    RULES.forEach((_,i)=>{p["c"+i]=checks[i]?"YES":"NO";});
+    return p;
+  }
+
+  // ── AI analyse ─────────────────────────────────────────────────
+  async function analyse(){
+    setAiLoad(true);setAiText("Analysing your trade...");
+    const failed=RULES.filter((_,i)=>!checks[i]).map(r=>r.t);
+    const rfD=isRF?`\nH1: exit ${rfEx1}, lots ${rfLt1}, P&L $${rfPnl1}\nH2: exit ${rfEx2} (${rfEx2T}), lots ${rfLt2}, P&L $${rfPnl2}`:"";
+    const prompt=`You are a professional forex and gold (XAU/USD) trading coach. Be sharp and specific.
+
+TRADE: ${pair||"Unknown"} | ${dir} | Bias: ${bias} | Strategy: ${strat}
+Sessions: ${sessions.join(",")||"—"} | TFs: ${tfs.join(",")||"—"}
+Planned: Entry ${sEntry} | SL ${sSL} | TP ${sTP}
+Actual: Entry ${isRF?rfEnt:rEntry} | Exit: ${isRF?rfEx1+" (H1), "+rfEx2+" (H2)":rExit}
+P&L: $${isRF?rfTotal:rPnl} | Pips: ${isRF?rfPips:rPips} | R:R: ${isRF?rfRR:rRR}
+Outcome: ${outcome}${rfD}
+Exit: ${exitType} | Slippage: ${slip} pips
+Checklist: ${score}/11 — ${vrd}
+Failed rules: ${failed.length?failed.join(", "):"None — all passed"}
+${override?"Override reason: "+override:""}
+Pre notes: ${preNotes||"—"} | Post notes: ${postNotes||"—"}
+Day so far: ${todayT.length} trades | P&L $${dayPnl.toFixed(2)} (${dayPct.toFixed(2)}%)
+
+Respond in this exact format:
+
+EXECUTION QUALITY: [1-2 sentences]
+
+WHAT YOU DID WELL:
+- [specific point]
+- [specific point]
+
+AREAS TO IMPROVE:
+- [specific actionable point]
+- [specific actionable point]
+
+KEY INSIGHT: [the single most important lesson from this trade]
+
+NEXT TRADE ADVICE: [what to focus on for the next setup on ${pair||"this pair"}]`;
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,messages:[{role:"user",content:prompt}]})
+      });
+      const data=await res.json();
+      setAiText(data.content?.[0]?.text||"No analysis returned.");
+      setAiDone(true);showToast("✓ Analysis complete — review then log");
+    }catch(e){
+      setAiText("⚠ AI Error: "+e.message+"\n\nIf you opened this file directly (file://) the browser blocks API calls.\n\nFix: Use your Netlify URL instead — https://your-site.netlify.app\n\nIf already on Netlify, check your internet connection.");
+      setAiDone(true);
+    }
+    setAiLoad(false);
+  }
+
+  // ── Log trade ──────────────────────────────────────────────────
+  async function logTrade(){
+    const url=sheetUrl.trim(),payload=buildPayload();
+    if(url) await sendToSheets(url, payload);
+    const entry={...payload,pnl:isRF?rfTotal:rPnl,pips:isRF?rfPips:rPips,outcome,date:getIST().date};
+    setLocalLog(p=>{const n=[...p,payload];localStorage.setItem("tj_log",JSON.stringify(n));return n;});
+    setDayTrades(p=>{const n=[...p,entry];localStorage.setItem("tj_day",JSON.stringify(n));return n;});
+    showToast("✓ Trade logged"+(url?" + sent to Sheets":"— add Sheets URL to sync"));
+    resetForm();
+  }
+
+  // ── Send to Sheets helper (POST no-cors + GET fallback) ──────────
+  async function sendToSheets(url, payload){
+    // Try POST with no-cors first
+    try{
+      await fetch(url,{method:"POST",mode:"no-cors",body:JSON.stringify(payload)});
+      return true;
+    }catch(e){}
+    // Fallback: GET with URL-encoded payload (handles some CORS edge cases)
+    try{
+      const encoded=encodeURIComponent(JSON.stringify(payload));
+      if(url.length+encoded.length < 7000){
+        await fetch(url+"?payload="+encoded,{mode:"no-cors"});
+        return true;
+      }
+    }catch(e){}
+    return false;
+  }
+
+  // ── End of day ─────────────────────────────────────────────────
+  async function endDay(){
+    if(!todayT.length){showToast("No trades today to summarise");return;}
+    const url=sheetUrl.trim();
+    const allPnls=todayT.map(t=>parseFloat(t.pnl)||0);
+    const newBalance=(bal+dayPnl).toFixed(2);
+    const eod={type:"eod",date:today,totalTrades:todayT.length,wins:dayWins,losses:dayLoss,
+      breakevens:todayT.filter(t=>t.outcome==="Breakeven").length,
+      riskFree:todayT.filter(t=>t.outcome==="Risk Free").length,
+      totalPnl:dayPnl.toFixed(2),totalPct:dayPct.toFixed(2)+"%",totalPips:dayPips.toFixed(2),
+      avgRR:(todayT.reduce((s,t)=>s+(parseFloat(t.rr)||0),0)/Math.max(1,todayT.length)).toFixed(2),
+      bestTrade:Math.max(...allPnls).toFixed(2),worstTrade:Math.min(...allPnls).toFixed(2),
+      balanceAfter:newBalance,pairsTraded:[...new Set(todayT.map(t=>t.pair))].join(", "),eodNotes};
+    if(url) await sendToSheets(url, eod);
+    setLocalLog(p=>{const n=[...p,eod];localStorage.setItem("tj_log",JSON.stringify(n));return n;});
+    // ── FIX: reset day trades + update balance to carry forward ──
+    setDayTrades([]);
+    localStorage.removeItem("tj_day");
+    setBalance(newBalance);
+    localStorage.setItem("tj_bal", newBalance);
+    setShowEOD(false);setEodNotes("");
+    showToast("✓ Day summary logged to Sheets! Balance updated to $"+newBalance);
+  }
+
+  // ── Reset form ─────────────────────────────────────────────────
+  function resetForm(){
+    setPair("");setOrderType("");setLotSize("");setDir("");setBias("");setSessions([]);setTfs([]);setStrat("");setSEntry("");setSSL("");setSTP("");setPreNotes("");
+    setChecks(Array(11).fill(false));setOverride("");
+    setOutcome("");setREntry("");setRExit("");setRPnl("");setRPips("");setRRR("");setRPipLbl("");setExitType("");setSlip("");setPostNotes("");
+    setRfEnt("");setRfEx1("");setRfLt1("");setRfPnl1("");setRfEx2("");setRfEx2T("");setRfLt2("");setRfPnl2("");setRfTotal("");setRfPips("");setRfRR("");
+    setAiText("Fill the result above then click Analyse.");setAiDone(false);
+    setTab("setup");
+  }
+
+  // ── Render ─────────────────────────────────────────────────────
+  return(
+    <div style={{background:K.bg,minHeight:"100vh",color:K.tx,fontFamily:"'Segoe UI',sans-serif",paddingBottom:80}}>
+
+      {/* Top bar */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 22px",borderBottom:`1px solid ${K.bd}`,flexWrap:"wrap",gap:10,background:K.bg}}>
+        <div style={{fontFamily:"monospace",fontSize:14,fontWeight:700,color:K.tx2,letterSpacing:".1em",textTransform:"uppercase"}}>
+          Trade<span style={{color:K.gr}}>Journal</span><span style={{color:K.tx3,fontSize:11}}> v3</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <span style={{fontFamily:"monospace",fontSize:11,color:K.tx3}}>{clock}</span>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:K.tx3,fontFamily:"monospace"}}>BALANCE $</span>
+            <input value={balance} onChange={e=>{setBalance(e.target.value);}} style={{width:90,padding:"5px 9px",fontSize:12}} placeholder="10000"/>
+          </div>
+        </div>
+      </div>
+
+      {/* Daily P&L bar */}
+      <div style={{background:K.bg2,borderBottom:`1px solid ${K.bd}`,padding:"11px 22px",display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+        <span style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".12em"}}>Today</span>
+        <div style={{width:1,height:28,background:K.bd}}/>
+        <StatChip label="P&L" value={(dayPnl>=0?"+":"")+"$"+dayPnl.toFixed(2)} color={dpCol}/>
+        <div style={{width:1,height:28,background:K.bd}}/>
+        <StatChip label="Return" value={(dayPct>=0?"+":"")+dayPct.toFixed(2)+"%" } color={dpCol}/>
+        <div style={{width:1,height:28,background:K.bd}}/>
+        <StatChip label="Pips" value={(dayPips>=0?"+":"")+dayPips.toFixed(1)} color={dpCol}/>
+        <div style={{width:1,height:28,background:K.bd}}/>
+        <StatChip label="Trades" value={todayT.length} color={K.tx}/>
+        <div style={{width:1,height:28,background:K.bd}}/>
+        <StatChip label="W / L" value={`${dayWins} / ${dayLoss}`} color={K.tx2}/>
+        <div style={{marginLeft:"auto"}}>
+          <Btn label="End Day + Log Summary" variant="pur" onClick={()=>setShowEOD(true)}/>
+        </div>
+      </div>
+
+      <div style={{maxWidth:880,margin:"0 auto",padding:"18px 18px 0"}}>
+
+        {/* Sheets config */}
+        <div style={{background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:14,marginBottom:14}}>
+          <div style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".12em",marginBottom:10}}>Google Sheets Connection</div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:220}}>
+              <Lbl t="Apps Script Web App URL"/>
+              <input value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)} placeholder="https://script.google.com/macros/s/..."/>
+            </div>
+            <Btn label="Test" onClick={async()=>{
+              if(!sheetUrl.trim()){showToast("Enter URL first");return;}
+              try{
+                await fetch(sheetUrl.trim(),{method:"POST",mode:"no-cors",body:JSON.stringify({test:true,timestamp:new Date().toISOString()})});
+                setConnMsg({t:"✓ Request sent — check sheet for test row",ok:true});
+              }catch(e){setConnMsg({t:"✗ Could not reach URL",ok:false});}
+            }}/>
+            {connMsg.t&&<span style={{fontSize:11,fontFamily:"monospace",color:connMsg.ok?K.gr:K.rd}}>{connMsg.t}</span>}
+          </div>
+          <div style={{marginTop:8,fontSize:11,color:K.tx3,lineHeight:1.6}}>
+            See the <strong style={{color:K.tx2}}>Script</strong> tab → paste into Google Sheet → Extensions → Apps Script → Deploy as Web App (Anyone)
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div style={{display:"flex",gap:3,background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:4,marginBottom:18}}>
+          {[["setup","01 Setup"],["checklist","02 Checklist"],["result","03 Result"],["log","04 Log"],["script","Script"]].map(([id,lbl])=>(
+            <div key={id}
+              onClick={()=>setTab(id)}
+              style={{flex:1,padding:"8px 4px",textAlign:"center",fontSize:10,fontWeight:700,cursor:"pointer",borderRadius:7,fontFamily:"monospace",letterSpacing:".04em",
+                color:tab===id?K.tx:K.tx2,background:tab===id?K.bg4:"transparent",border:tab===id?`1px solid ${K.bd2}`:"1px solid transparent"}}>
+              {lbl}
+            </div>
+          ))}
+        </div>
+
+        {/* ════ SETUP ════════════════════════════════════════════ */}
+        {tab==="setup"&&(
+          <div>
+            <Sec t="Instrument & Order"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+              <Fld label="Pair / Instrument"><input value={pair} onChange={e=>setPair(e.target.value)} placeholder="EUR/USD or XAU/USD"/></Fld>
+              <Fld label="Order Type">
+                <select value={orderType} onChange={e=>setOrderType(e.target.value)}>
+                  <option value="">Select...</option>
+                  {["Market Order","Limit Order","Stop Order","Stop-Limit"].map(o=><option key={o}>{o}</option>)}
+                </select>
+              </Fld>
+              <Fld label="Lot Size"><input type="number" value={lotSize} onChange={e=>setLotSize(e.target.value)} placeholder="0.01" step="0.01"/></Fld>
+            </div>
+
+            <Sec t="Direction"/>
+            <div style={{display:"flex",gap:6,marginBottom:4}}>
+              <Tog label="BUY / Long"  active={dir==="BUY"}  col="G" onClick={()=>setDir(dir==="BUY"?"":"BUY")}/>
+              <Tog label="SELL / Short" active={dir==="SELL"} col="R" onClick={()=>setDir(dir==="SELL"?"":"SELL")}/>
+            </div>
+
+            <Sec t="Market Bias"/>
+            <div style={{display:"flex",gap:6,marginBottom:4}}>
+              <Tog label="Bullish" active={bias==="Bullish"} col="G" onClick={()=>setBias(bias==="Bullish"?"":"Bullish")}/>
+              <Tog label="Bearish" active={bias==="Bearish"} col="R" onClick={()=>setBias(bias==="Bearish"?"":"Bearish")}/>
+            </div>
+
+            <Sec t="Session (multi-select)"/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
+              {SESSIONS.map(s=><Tog key={s} label={s} active={sessions.includes(s)} col="B" onClick={()=>toggleSess(s)}/>)}
+            </div>
+
+            <Sec t="Timeframe (multi-select)"/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
+              {TFS.map(t=><Tog key={t} label={t} active={tfs.includes(t)} col="A" onClick={()=>toggleTF(t)}/>)}
+            </div>
+
+            <Sec t="Strategy"/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
+              {["SMC","ICT","Price Action","Scalp","Swing"].map(s=><Tog key={s} label={s} active={strat===s} col="B" onClick={()=>setStrat(strat===s?"":s)}/>)}
+            </div>
+
+            <Sec t="Planned Levels"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+              <Fld label="Entry"><input type="number" value={sEntry} onChange={e=>setSEntry(e.target.value)} placeholder="1.08420" step="any"/></Fld>
+              <Fld label="Stop Loss"><input type="number" value={sSL} onChange={e=>setSSL(e.target.value)} placeholder="1.08200" step="any"/></Fld>
+              <Fld label="Take Profit"><input type="number" value={sTP} onChange={e=>setSTP(e.target.value)} placeholder="1.08860" step="any"/></Fld>
+            </div>
+
+            <Fld label="Pre-trade Notes / Reasoning">
+              <textarea value={preNotes} onChange={e=>setPreNotes(e.target.value)} placeholder="Why this trade? Key bias / structure observations..."/>
+            </Fld>
+
+            <div style={{display:"flex",gap:10,marginTop:18}}>
+              <Btn label="Next → Checklist" variant="pri" onClick={()=>setTab("checklist")}/>
+            </div>
+          </div>
+        )}
+
+        {/* ════ CHECKLIST ════════════════════════════════════════ */}
+        {tab==="checklist"&&(
+          <div>
+            <Sec t="Structure & Bias"/>
+            {RULES.slice(0,2).map((r,i)=><CheckRow key={i} rule={r} checked={checks[i]} onToggle={()=>toggleChk(i)}/>)}
+            <Sec t="Entry Conditions"/>
+            {RULES.slice(2,6).map((r,i)=><CheckRow key={i+2} rule={r} checked={checks[i+2]} onToggle={()=>toggleChk(i+2)}/>)}
+            <Sec t="Risk Management"/>
+            {RULES.slice(6,9).map((r,i)=><CheckRow key={i+6} rule={r} checked={checks[i+6]} onToggle={()=>toggleChk(i+6)}/>)}
+            <Sec t="News Filter"/>
+            {RULES.slice(9).map((r,i)=><CheckRow key={i+9} rule={r} checked={checks[i+9]} onToggle={()=>toggleChk(i+9)}/>)}
+
+            {/* Score */}
+            <div style={{marginTop:16,padding:16,background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                <span style={{fontFamily:"monospace",fontSize:22,fontWeight:700,color:vrdCol}}>{score} / 11</span>
+                <span style={{fontFamily:"monospace",fontSize:12,padding:"5px 14px",borderRadius:6,fontWeight:700,
+                  background:score>=9?K.grd:score>=6?K.amd:K.rdd,color:vrdCol}}>{vrd}</span>
+              </div>
+              <div style={{display:"flex",gap:4}}>
+                {Array(11).fill(0).map((_,i)=>(
+                  <div key={i} style={{height:5,flex:1,borderRadius:3,background:i<score?vrdCol:K.bd}}/>
+                ))}
+              </div>
+            </div>
+
+            {/* Override reason */}
+            {score<9&&(
+              <div style={{marginTop:12,padding:14,background:K.bg3,border:`1px solid ${K.am}`,borderRadius:8}}>
+                <label style={{fontSize:11,color:K.am,fontFamily:"monospace",letterSpacing:".06em",textTransform:"uppercase",display:"block",marginBottom:6}}>
+                  {score<6?"Reason for trading against warning":"Reason for trading with caution"}
+                </label>
+                <textarea value={override} onChange={e=>setOverride(e.target.value)} placeholder="Explain why you are proceeding..." style={{background:K.bg2}}/>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10,marginTop:18}}>
+              <Btn label="← Back" onClick={()=>setTab("setup")}/>
+              <Btn label="Next → Result" variant="pri" onClick={()=>setTab("result")}/>
+            </div>
+          </div>
+        )}
+
+        {/* ════ RESULT ═══════════════════════════════════════════ */}
+        {tab==="result"&&(
+          <div>
+            <Sec t="Trade Outcome"/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+              {["Win","Loss","Breakeven","Risk Free"].map(o=>(
+                <Tog key={o} label={o} active={outcome===o}
+                  col={o==="Win"?"G":o==="Loss"?"R":o==="Risk Free"?"P":"A"}
+                  onClick={()=>setOutcome(outcome===o?"":o)}/>
+              ))}
+            </div>
+
+            {/* Standard exit */}
+            {!isRF&&(
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <Fld label="Actual Entry"><input type="number" value={rEntry} onChange={e=>{setREntry(e.target.value);calcStd(e.target.value,rExit);}} placeholder={sEntry||"Entry price"} step="any"/></Fld>
+                  <Fld label="Exit Price"><input type="number" value={rExit} onChange={e=>{setRExit(e.target.value);calcStd(rEntry,e.target.value);}} placeholder="Exit price" step="any"/></Fld>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
+                  <Fld label="P&L (USD)"><input readOnly value={rPnl}/></Fld>
+                  <Fld label="Pips"><input readOnly value={rPips}/></Fld>
+                  <Fld label="Achieved R:R"><input readOnly value={rRR}/></Fld>
+                  <Fld label="Pip Method"><input readOnly value={rPipLbl}/></Fld>
+                </div>
+              </>
+            )}
+
+            {/* Risk Free split */}
+            {isRF&&(
+              <div style={{padding:16,background:K.bg3,border:`1px solid ${K.pu}`,borderRadius:10,marginBottom:10}}>
+                <div style={{fontFamily:"monospace",fontSize:10,color:K.pu,textTransform:"uppercase",letterSpacing:".1em",marginBottom:14}}>Risk Free Trade — Split Exit</div>
+                <Fld label="Actual Entry">
+                  <input type="number" value={rfEnt} onChange={e=>{setRfEnt(e.target.value);calcRF("rfEnt",e.target.value);}} placeholder={sEntry||"Entry"} step="any"/>
+                </Fld>
+                <div style={{fontFamily:"monospace",fontSize:10,color:K.pu,margin:"14px 0 8px",letterSpacing:".06em"}}>HALF 1 — Booked at ~1:1</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+                  <Fld label="Exit H1"><input type="number" value={rfEx1} onChange={e=>{setRfEx1(e.target.value);calcRF("rfEx1",e.target.value);}} step="any"/></Fld>
+                  <Fld label="Lots H1"><input type="number" value={rfLt1} onChange={e=>{setRfLt1(e.target.value);calcRF("rfLt1",e.target.value);}} step="0.01"/></Fld>
+                  <Fld label="P&L H1"><input readOnly value={rfPnl1}/></Fld>
+                </div>
+                <div style={{borderTop:`1px solid ${K.bd}`,margin:"12px 0"}}/>
+                <div style={{fontFamily:"monospace",fontSize:10,color:K.tx2,marginBottom:8,letterSpacing:".06em"}}>HALF 2 — Let It Run</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <Fld label="Exit Type H2">
+                    <select value={rfEx2T} onChange={e=>{setRfEx2T(e.target.value);calcRF("rfEx2T",e.target.value);}}>
+                      <option value="">Select...</option>
+                      {["Hit TP","Hit SL (breakeven)","Manual — profit","Manual — loss","Trailing stop"].map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </Fld>
+                  <Fld label="Exit H2"><input type="number" value={rfEx2} onChange={e=>{setRfEx2(e.target.value);calcRF("rfEx2",e.target.value);}} step="any"/></Fld>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <Fld label="Lots Remaining H2"><input readOnly value={rfLt2}/></Fld>
+                  <Fld label="P&L H2"><input readOnly value={rfPnl2}/></Fld>
+                </div>
+                <div style={{borderTop:`1px solid ${K.bd}`,margin:"12px 0"}}/>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                  <Fld label="Total P&L"><input readOnly value={rfTotal} style={{color:parseFloat(rfTotal)>=0?K.gr:K.rd,fontWeight:700}}/></Fld>
+                  <Fld label="Total Pips"><input readOnly value={rfPips}/></Fld>
+                  <Fld label="Blended R:R"><input readOnly value={rfRR}/></Fld>
+                </div>
+              </div>
+            )}
+
+            {/* P&L display */}
+            {(rPnl||rfTotal)&&(
+              <div style={{padding:20,borderRadius:10,border:`1px solid ${K.bd}`,background:K.bg3,textAlign:"center",marginBottom:12}}>
+                <div style={{fontFamily:"monospace",fontSize:32,fontWeight:700,color:dPnl>0?K.gr:dPnl<0?K.rd:K.am}}>
+                  {dPnl>=0?"+":""}${Math.abs(dPnl).toFixed(2)}
+                </div>
+                <div style={{fontSize:11,color:K.tx3,fontFamily:"monospace",marginTop:4}}>{dPips} pips | R:R {dRR||"—"}</div>
+              </div>
+            )}
+
+            <Sec t="Execution Quality"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Fld label="Exit Type">
+                <select value={exitType} onChange={e=>setExitType(e.target.value)}>
+                  <option value="">Select...</option>
+                  {["Hit TP","Hit SL","Manual — profit","Manual — loss","Trailing stop","Breakeven stop","Risk free partial"].map(o=><option key={o}>{o}</option>)}
+                </select>
+              </Fld>
+              <Fld label="Slippage (pips)"><input type="number" value={slip} onChange={e=>setSlip(e.target.value)} placeholder="0" step="0.1"/></Fld>
+            </div>
+
+            <Fld label="Post-trade Notes">
+              <textarea value={postNotes} onChange={e=>setPostNotes(e.target.value)} placeholder="What happened? What did you do well or miss?"/>
+            </Fld>
+
+            {/* AI box */}
+            <div style={{background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:16,marginTop:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:K.pu,animation:"pulse 2s infinite"}}/>
+                <span style={{fontFamily:"monospace",fontSize:10,color:K.tx3,textTransform:"uppercase",letterSpacing:".1em"}}>AI Coaching Analysis</span>
+                {aiLoad&&<div style={{width:12,height:12,border:`2px solid ${K.pu}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite",marginLeft:"auto"}}/>}
+              </div>
+              <div style={{fontSize:12,color:K.tx2,lineHeight:1.8,whiteSpace:"pre-wrap",fontFamily:"monospace"}}>{aiText}</div>
+            </div>
+
+            <div style={{display:"flex",gap:10,marginTop:18,flexWrap:"wrap"}}>
+              <Btn label="← Back" onClick={()=>setTab("checklist")}/>
+              <Btn label={aiLoad?"Analysing...":aiDone?"Re-analyse":"Analyse Trade"} onClick={analyse} disabled={aiLoad}/>
+              <Btn label="Log + Next Trade" variant="pri" disabled={!aiDone} onClick={aiDone?logTrade:undefined}/>
+            </div>
+          </div>
+        )}
+
+        {/* ════ LOG ══════════════════════════════════════════════ */}
+        {tab==="log"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <span style={{fontFamily:"monospace",fontSize:11,color:K.tx3}}>{localLog.filter(t=>t.type==="trade").length} trades in local log</span>
+              <Btn label="Clear Log" variant="dan" onClick={()=>{if(confirm("Clear local log? Sheets data is not affected.")){setLocalLog([]);localStorage.removeItem("tj_log");}}}/>
+            </div>
+
+            {/* Trades table */}
+            <div style={{overflowX:"auto",border:`1px solid ${K.bd}`,borderRadius:10,marginBottom:20}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontFamily:"monospace",fontSize:11}}>
+                <thead>
+                  <tr>
+                    {["Date","Time","Pair","Dir","Bias","Strategy","Entry","Exit","Pips","P&L","R:R","Score","Outcome"].map(h=>(
+                      <th key={h} style={{padding:"9px 12px",textAlign:"left",color:K.tx3,fontSize:9,textTransform:"uppercase",letterSpacing:".1em",borderBottom:`1px solid ${K.bd}`,background:K.bg2,fontWeight:700,whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {localLog.filter(t=>t.type==="trade").length===0?(
+                    <tr><td colSpan={13} style={{padding:40,textAlign:"center",color:K.tx3}}>No trades logged yet</td></tr>
+                  ):[...localLog.filter(t=>t.type==="trade")].reverse().map((t,i)=>{
+                    const pnl=parseFloat(t.pnl)||0;
+                    const oc=t.outcome||"";
+                    const col=oc==="Win"?K.gr:oc==="Loss"?K.rd:oc==="Risk Free"?K.pu:K.am;
+                    return(
+                      <tr key={i} style={{borderBottom:`1px solid ${K.bd}`}}>
+                        {[
+                          [t.date||"—",K.tx3],[t.timeIST||"—",K.tx3],[t.pair||"—",K.tx],
+                          [t.direction||"—",t.direction==="BUY"?K.gr:K.rd],[t.bias||"—",K.tx2],[t.strategy||"—",K.tx2],
+                          [t.actualEntry||"—",K.tx2],[t.exit1||"—",K.tx2],[t.pips||"—",K.tx2],
+                          [(pnl>=0?"+":"")+"$"+pnl.toFixed(2),col],[t.rr||"—",K.tx2],[t.checklistScore||"—",K.tx2],[oc||"—",col]
+                        ].map(([v,c],j)=>(
+                          <td key={j} style={{padding:"9px 12px",color:c,whiteSpace:"nowrap"}}>{v}</td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Daily summaries table */}
+            {localLog.filter(t=>t.type==="eod").length>0&&(
+              <>
+                <Sec t="Daily Summaries"/>
+                <div style={{overflowX:"auto",border:`1px solid ${K.bd}`,borderRadius:10}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontFamily:"monospace",fontSize:11}}>
+                    <thead>
+                      <tr>
+                        {["Date","Trades","W","L","P&L $","Return %","Pips","Avg R:R","Best","Worst","Balance After"].map(h=>(
+                          <th key={h} style={{padding:"9px 12px",textAlign:"left",color:K.tx3,fontSize:9,textTransform:"uppercase",letterSpacing:".1em",borderBottom:`1px solid ${K.bd}`,background:K.bg2,fontWeight:700,whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...localLog.filter(t=>t.type==="eod")].reverse().map((t,i)=>{
+                        const pnl=parseFloat(t.totalPnl)||0;
+                        const col=pnl>0?K.gr:pnl<0?K.rd:K.am;
+                        return(
+                          <tr key={i} style={{borderBottom:`1px solid ${K.bd}`}}>
+                            {[
+                              [t.date,K.tx],[""+t.totalTrades,K.tx2],[t.wins,K.gr],[t.losses,K.rd],
+                              [(pnl>=0?"+":"")+"$"+pnl.toFixed(2),col],[t.totalPct,col],[t.totalPips,K.tx2],[t.avgRR,K.tx2],
+                              ["$"+t.bestTrade,K.gr],["$"+t.worstTrade,K.rd],["$"+t.balanceAfter,col]
+                            ].map(([v,c],j)=>(
+                              <td key={j} style={{padding:"9px 12px",color:c,whiteSpace:"nowrap"}}>{v}</td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ════ SCRIPT ═══════════════════════════════════════════ */}
+        {tab==="script"&&(
+          <div>
+            <Sec t="Paste into Google Sheet → Extensions → Apps Script"/>
+            <div style={{background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:14,fontFamily:"monospace",fontSize:10,color:K.tx2,lineHeight:1.7,whiteSpace:"pre-wrap",overflowX:"auto",maxHeight:300,overflowY:"auto"}}>
+              {SCRIPT}
+            </div>
+            <div style={{display:"flex",gap:10,marginTop:12}}>
+              <Btn label="Copy Script" onClick={()=>navigator.clipboard.writeText(SCRIPT).then(()=>showToast("Script copied!"))}/>
+            </div>
+            <div style={{marginTop:16,fontFamily:"monospace",fontSize:11,color:K.tx3,lineHeight:2,background:K.bg2,border:`1px solid ${K.bd}`,borderRadius:10,padding:16}}>
+              <strong style={{color:K.tx2}}>Setup steps:</strong><br/>
+              1. Open your Google Sheet → Extensions → Apps Script<br/>
+              2. Delete default code → paste the script above → Ctrl+S to save<br/>
+              3. Click Deploy → New deployment → Web app<br/>
+              4. Execute as: <strong style={{color:K.tx}}>Me</strong> | Who has access: <strong style={{color:K.tx}}>Anyone</strong><br/>
+              5. Click Deploy → Authorise when prompted<br/>
+              6. Copy the Web App URL (starts with /macros/s/)<br/>
+              7. Paste it in the config box above → done<br/><br/>
+              <strong style={{color:K.tx2}}>Sheets created automatically:</strong><br/>
+              • <strong style={{color:K.gr}}>TradeJournal</strong> — one row per individual trade<br/>
+              • <strong style={{color:K.pu}}>DailySummary</strong> — one row per day (End Day button)<br/><br/>
+              <strong style={{color:K.am}}>Note:</strong> Local log persists in browser storage even without Sheets connected.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ════ EOD Modal ════════════════════════════════════════════ */}
+      {showEOD&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.82)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}}
+          onClick={e=>{if(e.target===e.currentTarget)setShowEOD(false);}}>
+          <div style={{background:K.bg2,border:`1px solid ${K.bd2}`,borderRadius:14,padding:26,maxWidth:520,width:"100%",maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{fontFamily:"monospace",fontSize:14,fontWeight:700,color:K.tx,marginBottom:20,letterSpacing:".04em"}}>End of Day — {today}</div>
+
+            {/* Big 3 stats */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+              {[["Total P&L",(dayPnl>=0?"+":"")+"$"+dayPnl.toFixed(2),dpCol],["Return",(dayPct>=0?"+":"")+dayPct.toFixed(2)+"%",dpCol],["Total Pips",(dayPips>=0?"+":"")+dayPips.toFixed(1),dpCol]].map(([l,v,col])=>(
+                <div key={l} style={{background:K.bg3,border:`1px solid ${K.bd}`,borderRadius:8,padding:14,textAlign:"center"}}>
+                  <div style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".1em",marginBottom:6}}>{l}</div>
+                  <div style={{fontFamily:"monospace",fontSize:22,fontWeight:700,color:col}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 4 smaller stats */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
+              {[["Trades",""+todayT.length,K.tx],["Wins",""+dayWins,K.gr],["Losses",""+dayLoss,K.rd],["Bal After","$"+(bal+dayPnl).toFixed(2),dpCol]].map(([l,v,col])=>(
+                <div key={l} style={{background:K.bg3,border:`1px solid ${K.bd}`,borderRadius:8,padding:"10px 8px",textAlign:"center"}}>
+                  <div style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".1em",marginBottom:4}}>{l}</div>
+                  <div style={{fontFamily:"monospace",fontSize:14,fontWeight:700,color:col}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Trade list */}
+            {todayT.length>0&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontFamily:"monospace",fontSize:9,color:K.tx3,textTransform:"uppercase",letterSpacing:".1em",marginBottom:8}}>Trades Today</div>
+                {todayT.map((t,i)=>{
+                  const pnl=parseFloat(t.pnl)||0;
+                  const col=pnl>0?K.gr:pnl<0?K.rd:K.am;
+                  return(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:K.bg3,border:`1px solid ${K.bd}`,borderRadius:6,marginBottom:5,fontFamily:"monospace",fontSize:11}}>
+                      <span style={{color:K.tx,minWidth:70}}>{t.pair||"—"}</span>
+                      <span style={{color:t.direction==="BUY"?K.gr:K.rd,minWidth:40}}>{t.direction}</span>
+                      <span style={{color:K.tx2,minWidth:60}}>{t.pips} pips</span>
+                      <span style={{color:col,minWidth:70}}>{pnl>=0?"+":""}${pnl.toFixed(2)}</span>
+                      <span style={{color:col}}>{t.outcome}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <Fld label="End of Day Notes (optional)">
+              <textarea value={eodNotes} onChange={e=>setEodNotes(e.target.value)} placeholder="Session notes, key lessons, what to work on tomorrow..."/>
+            </Fld>
+
+            <div style={{display:"flex",gap:10,marginTop:16}}>
+              <Btn label="Cancel" onClick={()=>setShowEOD(false)}/>
+              <Btn label="Confirm — Log Day to Sheets" variant="pri" onClick={endDay}/>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg&&(
+        <div style={{position:"fixed",bottom:22,right:22,background:K.bg4,border:`1px solid ${K.bd2}`,borderRadius:8,padding:"12px 18px",fontFamily:"monospace",fontSize:12,color:K.tx,zIndex:200,pointerEvents:"none",boxShadow:"0 4px 24px rgba(0,0,0,.5)"}}>
+          {toastMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
